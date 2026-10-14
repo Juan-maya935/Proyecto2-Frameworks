@@ -2,6 +2,15 @@
 
 **Materia:** Frameworks y Herramientas para Big Data – UAO
 
+Integrantes: 
+
+Juan Sebastián Delgado 2216223
+Juan Pablo Maya – 2236377
+Alejandro Estrada 2226214
+Diego Hernandez -2232060
+
+
+
 Stack: **MinIO** (S3) · **Apache Iceberg** · **Project Nessie** (catálogo) · **Apache Spark** · **dlt** · **Apache Airflow** · **Trino** · **Dremio** · **Jupyter**
 
 ---
