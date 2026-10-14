@@ -1,0 +1,5 @@
+# Entorno virtual aislado de dlt (mismas versiones que el corte 1)
+dlt[filesystem,s3]==1.20.0
+s3fs==2025.3.1
+fsspec==2025.3.1
+pyarrow==18.1.0

@@ -1,0 +1,11 @@
+# Jupyter sobre la MISMA imagen de Spark del clúster (Spark 3.5.5, Python 3.9, JARs de
+# Iceberg/Nessie/S3 y spark-defaults.conf). Requiere que custom-spark:3.5.5-py39 ya exista
+# (se construye con: docker compose build spark-master).
+FROM custom-spark:3.5.5-py39
+
+USER root
+
+COPY requirements-jupyter.txt /tmp/requirements-jupyter.txt
+RUN pip install --no-cache-dir -r /tmp/requirements-jupyter.txt
+
+WORKDIR /workspace

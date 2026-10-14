@@ -1,0 +1,36 @@
+# Airflow 2.9.0 con Python 3.9 -> mismo minor que los workers de Spark (Dockerfile.spark)
+FROM apache/airflow:2.9.0-python3.9
+
+USER root
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends openjdk-17-jdk ant procps wget && \
+    apt-get clean && rm -rf /var/lib/apt/lists/* && \
+    ln -s /usr/lib/jvm/java-17-openjdk-* /usr/lib/jvm/java-17
+
+ENV JAVA_HOME=/usr/lib/jvm/java-17
+
+USER airflow
+
+COPY requirements-airflow.txt /tmp/requirements-airflow.txt
+RUN pip install --no-cache-dir "apache-airflow==${AIRFLOW_VERSION}" -r /tmp/requirements-airflow.txt
+
+# JARs de Iceberg / Nessie / S3 en el pyspark de Airflow (driver en modo client)
+RUN SPARK_JARS="$(python -c 'import os,pyspark;print(os.path.join(os.path.dirname(pyspark.__file__),"jars"))')" && \
+    cd "$SPARK_JARS" && \
+    wget -q https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.3/postgresql-42.7.3.jar && \
+    wget -q https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-spark-runtime-3.5_2.12/1.5.0/iceberg-spark-runtime-3.5_2.12-1.5.0.jar && \
+    wget -q https://repo1.maven.org/maven2/org/projectnessie/nessie-integrations/nessie-spark-extensions-3.5_2.12/0.77.1/nessie-spark-extensions-3.5_2.12-0.77.1.jar && \
+    wget -q https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar && \
+    wget -q https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar && \
+    wget -q https://repo1.maven.org/maven2/software/amazon/awssdk/bundle/2.24.8/bundle-2.24.8.jar && \
+    wget -q https://repo1.maven.org/maven2/software/amazon/awssdk/url-connection-client/2.24.8/url-connection-client-2.24.8.jar
+
+COPY --chown=airflow:root spark-defaults.conf /opt/airflow/spark-conf/spark-defaults.conf
+ENV SPARK_CONF_DIR=/opt/airflow/spark-conf
+
+# --- Entorno virtual aislado para dlt (no toca los paquetes de Airflow) ---
+COPY requirements-dlt.txt /tmp/requirements-dlt.txt
+RUN python -m venv /home/airflow/dlt-venv && \
+    /home/airflow/dlt-venv/bin/pip install --upgrade pip setuptools wheel && \
+    /home/airflow/dlt-venv/bin/pip install --no-cache-dir --default-timeout=1000 --retries=10 -r /tmp/requirements-dlt.txt

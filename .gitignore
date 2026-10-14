@@ -1,0 +1,27 @@
+# Variables locales (no subir). airflow.env SI se sube: lo exige docker-compose.yml
+.env
+!airflow.env
+
+# Cache de dlt (secrets.toml SI se sube, sin llaves reales)
+.dlt/pipelines/
+.dlt/.anonymous_id
+
+# Datos: el Data Lake se regenera con el pipeline
+data/
+nessie-data/
+clickhouse-data/
+*.parquet
+*.duckdb
+
+# Temporales de Jupyter / sistema
+.ipynb_checkpoints/
+notebooks/.local/
+notebooks/.npm/
+notebooks/.jupyter/
+notebooks/.ipython/
+logs/
+*.log
+__pycache__/
+*.pyc
+.venv/
+venv/

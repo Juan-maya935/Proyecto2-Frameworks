@@ -1,0 +1,265 @@
+# ===== ANCHORS NUEVOS (Spark + Airflow) =====
+x-aws-env: &aws-env
+  AWS_REGION: us-east-1
+  AWS_DEFAULT_REGION: us-east-1
+  AWS_ACCESS_KEY_ID: admin
+  AWS_SECRET_ACCESS_KEY: password
+
+x-spark-common: &spark-common
+  build:
+    context: .
+    dockerfile: Dockerfile.spark
+  image: custom-spark:3.5.5-py39
+  user: root
+  volumes:
+    - ./jobs:/opt/spark/jobs
+  networks:
+    - mi_red
+
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: Dockerfile.airflow
+  image: custom-airflow:2.9.0-py39
+  env_file:
+    - airflow.env
+  environment: &airflow-env
+    <<: *aws-env
+    DLT_DATA_DIR: /tmp/dlt
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./.dlt:/home/airflow/.dlt
+    - airflow-logs:/opt/airflow/logs
+    - ./config:/opt/airflow/config
+    - ./plugins:/opt/airflow/plugins
+    - ./jobs:/opt/airflow/jobs
+  user: "${AIRFLOW_UID:-50000}:0"
+  networks:
+    - mi_red
+
+services:
+  # ================= SERVICIOS EXISTENTES - los ajuste para spark y airflow =================
+  jupyter:
+    build:
+      context: .
+      dockerfile: Dockerfile.jupyter
+    image: custom-jupyter:spark-3.5.5
+    container_name: jupyter_notebook
+    user: root
+    ports:
+      - "8888:8888"
+    environment:
+      <<: *aws-env
+    volumes:
+      - ./notebooks:/workspace/notebooks
+      - ./dags:/workspace/dags
+      - ./.dlt:/root/.dlt
+    command: >
+      jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root
+      --ServerApp.token='' --ServerApp.password=''
+      --notebook-dir=/workspace/notebooks
+    networks:
+      - mi_red
+  
+  minio:
+    image: pgsty/minio:latest   # minio/minio fue retirada de Docker Hub
+    container_name: minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: password
+      MINIO_REGION: us-east-1
+    volumes:
+      - ./data:/data
+    # Los buckets se crean como carpetas (la imagen pgsty/minio no trae mc)
+    entrypoint: >
+      /bin/sh -c "mkdir -p /data/my-bucket /data/warehouse /data/bronze /data/silver /data/gold &&
+      minio server /data --console-address ':9001'"
+    networks:
+      - mi_red
+
+  nessie:
+    image: ghcr.io/projectnessie/nessie:latest 
+    container_name: nessie
+    ports:
+      - "19120:19120"
+    environment:
+      - nessie.version.store.type=ROCKSDB
+      - nessie.version.store.persist.rocks.database-path=/var/lib/nessie
+      - nessie.catalog.default-warehouse=warehouse
+      - nessie.catalog.warehouses.warehouse.location=s3://my-bucket/
+      - nessie.catalog.service.s3.default-options.endpoint=http://minio:9000/
+      - nessie.catalog.service.s3.default-options.access-key=urn:nessie-secret:quarkus:nessie.catalog.secrets.access-key
+      - nessie.catalog.service.s3.default-options.path-style-access=true
+      - nessie.catalog.service.s3.default-options.auth-type=STATIC
+      - nessie.catalog.secrets.access-key.name=admin
+      - nessie.catalog.secrets.access-key.secret=password
+      - nessie.catalog.service.s3.default-options.region=us-east-1
+      - nessie.server.authentication.enabled=false
+    volumes:
+      - ./nessie-data:/var/lib/nessie
+    networks:
+      - mi_red
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: clickhouse
+    ports:
+      - "8123:8123"   # HTTP interface 
+      - "9004:9000"   # Native protocol -> host 9004 para evitar choque con Minio
+    environment:
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: default
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    networks:
+      - mi_red
+
+  dremio:
+    image: dremio/dremio-oss:latest
+    platform: linux/x86_64
+    container_name: dremio_fhbd_1
+    ports:
+      - "9047:9047"
+      - "31010:31010"
+      - "32010:32010"
+    environment:
+      - DREMIO_JAVA_SERVER_EXTRA_OPTS=-Dpaths.dist=file:///opt/dremio/data/dist
+    volumes:
+      - dremio-data:/opt/dremio/data
+    networks:
+      - mi_red
+    
+  trino:
+    image: trinodb/trino:latest
+    container_name: trino_fhbd_1
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./trino/catalog:/etc/trino/catalog
+      - ./trino/config:/etc/trino/config
+      - ./trino/auth:/etc/trino/auth
+    environment:
+      TRINO_USER: admin
+      TRINO_PASSWORD: password
+    networks:
+      - mi_red
+
+  # ======================= NUEVO: SPARK =======================
+  spark-master:
+    <<: *spark-common
+    container_name: spark_master
+    hostname: spark-master
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    ports:
+      - "9090:8080"
+      - "7077:7077"
+    environment:
+      <<: *aws-env
+      SPARK_MASTER_HOST: spark-master
+      SPARK_MASTER_PORT: "7077"
+      SPARK_MASTER_WEBUI_PORT: "8080"
+
+  spark-worker:
+    <<: *spark-common
+    container_name: spark_worker
+    hostname: spark-worker
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    ports:
+      - "8081:8081"
+    environment:
+      <<: *aws-env
+      SPARK_WORKER_CORES: "2"
+      SPARK_WORKER_MEMORY: 1g
+      SPARK_WORKER_WEBUI_PORT: "8081"
+    depends_on:
+      - spark-master
+
+  # ======================= NUEVO: AIRFLOW =======================
+  postgres:
+    image: postgres:13
+    container_name: postgres_airflow
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: always
+    networks:
+      - mi_red
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: airflow_init
+    user: "0:0"
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        mkdir -p /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins /opt/airflow/config
+        airflow db migrate
+        airflow users create \
+          --username admin --password admin \
+          --firstname Admin --lastname User \
+          --role Admin --email admin@example.com || true
+        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/logs /opt/airflow/plugins /opt/airflow/config
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: airflow_webserver
+    command: webserver
+    ports:
+      - "8085:8080"   # 8080 del host ya lo usa Trino
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: airflow_scheduler
+    command: scheduler
+    hostname: airflow-scheduler
+    environment:
+      <<: *airflow-env
+      SPARK_LOCAL_HOSTNAME: airflow-scheduler
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+networks:
+  mi_red:
+volumes:
+  clickhouse-data:
+  dremio-data:
+  postgres-db-volume:   # NUEVO
+  airflow-logs:

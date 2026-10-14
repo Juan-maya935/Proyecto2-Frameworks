@@ -1,0 +1,19 @@
+numpy
+pandas
+urllib3
+requests
+# AWS / MinIO (S3 compatible)
+boto3
+s3fs==2025.3.1
+fsspec==2025.3.1
+# Arrow / Parquet
+pyarrow==18.1.0
+# Iceberg
+pyiceberg==0.9.1
+# DLT (una sola línea, con extras y versión reciente)
+dlt[filesystem,s3,duckdb,clickhouse,az]==1.20.0
+ibis-framework[duckdb]
+# APIs
+sodapy
+# Cliente MinIO (opcional pero útil)
+minio

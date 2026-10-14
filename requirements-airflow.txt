@@ -1,0 +1,9 @@
+apache-airflow-providers-apache-spark==4.11.3
+apache-airflow-providers-openlineage==1.8.0
+pyspark==3.5.5
+# numpy/pandas fijados a lo que usa Airflow 2.9.0 (numpy 2.x rompe pandas 2.1)
+numpy==1.26.4
+pandas==2.1.4
+urllib3
+boto3
+sodapy
